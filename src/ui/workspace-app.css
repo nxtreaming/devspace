@@ -185,7 +185,8 @@ body {
 
 .review-summary {
   display: grid;
-  padding: 0 14px 12px;
+  border-top: 1px solid var(--color-border-primary, #3a3a40);
+  background: var(--color-background-primary, #18191d);
 }
 
 .review-actions,
@@ -228,12 +229,13 @@ body {
   gap: 8px;
   max-height: 520px;
   overflow: auto;
-  padding: 0;
+  padding: 0 0 12px;
 }
 
 .review-diff-files {
   display: grid;
   gap: 8px;
+  padding: 12px 14px 0;
 }
 
 .review-diff-file {
