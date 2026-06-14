@@ -2,20 +2,9 @@ import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { expandHomePath } from "./roots.js";
 import type { AutoCommitConfig, AutoCommitProviderId } from "./autocommit/types.js";
+import type { LoggingConfig, LogFormat, LogLevel } from "./logger.js";
 
 export type ToolNamingMode = "legacy" | "short";
-export type LogLevel = "silent" | "error" | "warn" | "info" | "debug";
-export type LogFormat = "json" | "pretty";
-
-export interface LoggingConfig {
-  level: LogLevel;
-  format: LogFormat;
-  requests: boolean;
-  assets: boolean;
-  toolCalls: boolean;
-  shellCommands: boolean;
-  trustProxy: boolean;
-}
 
 const DEFAULT_AUTOCOMMIT_MODEL = "gpt-5.3-codex-spark";
 const DEFAULT_AUTOCOMMIT_CODEX_REASONING_EFFORT = "low";
