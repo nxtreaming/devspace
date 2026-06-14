@@ -4,6 +4,8 @@ import { expandHomePath } from "./roots.js";
 import type { AutoCommitConfig, AutoCommitProviderId } from "./autocommit/types.js";
 
 export type ToolNamingMode = "legacy" | "short";
+const DEFAULT_AUTOCOMMIT_MODEL = "gpt-5.3-codex-spark";
+const DEFAULT_AUTOCOMMIT_CODEX_REASONING_EFFORT = "low";
 
 export interface ServerConfig {
   host: string;
@@ -83,28 +85,20 @@ function parsePositiveInteger(value: string | undefined, fallback: number, name:
   return parsed;
 }
 
-function parseAutoCommitProviders(value: string | undefined): AutoCommitProviderId[] {
-  const rawProviders =
-    value
-      ?.split(",")
-      .map((entry) => entry.trim())
-      .filter(Boolean) ?? ["pi", "codex"];
-
-  const providers: AutoCommitProviderId[] = [];
-  for (const provider of rawProviders) {
-    if (provider !== "pi" && provider !== "codex") {
-      throw new Error(`Invalid DEVSPACE_AUTOCOMMIT_PROVIDER: ${provider}`);
-    }
-    if (!providers.includes(provider)) providers.push(provider);
+function parseAutoCommitProvider(value: string | undefined): AutoCommitProviderId {
+  const provider = value?.trim() || "codex";
+  if (provider !== "pi" && provider !== "codex") {
+    throw new Error(`Invalid DEVSPACE_AUTOCOMMIT_PROVIDER: ${provider}`);
   }
 
-  return providers;
+  return provider;
 }
 
 function parseAutoCommitConfig(env: NodeJS.ProcessEnv): AutoCommitConfig {
+  const provider = parseAutoCommitProvider(env.DEVSPACE_AUTOCOMMIT_PROVIDER);
   return {
     enabled: parseBoolean(env.DEVSPACE_AUTOCOMMIT),
-    providers: parseAutoCommitProviders(env.DEVSPACE_AUTOCOMMIT_PROVIDER),
+    provider,
     afterMutatingToolCalls: parsePositiveInteger(
       env.DEVSPACE_AUTOCOMMIT_AFTER,
       8,
@@ -117,7 +111,13 @@ function parseAutoCommitConfig(env: NodeJS.ProcessEnv): AutoCommitConfig {
       "DEVSPACE_AUTOCOMMIT_MAX_DIFF_BYTES",
     ),
     refPrefix: env.DEVSPACE_AUTOCOMMIT_REF_PREFIX ?? "refs/devspace/autocommit",
-    codexModel: env.DEVSPACE_AUTOCOMMIT_CODEX_MODEL,
+    model:
+      env.DEVSPACE_AUTOCOMMIT_MODEL ??
+      (provider === "codex" ? DEFAULT_AUTOCOMMIT_MODEL : undefined),
+    codexReasoningEffort:
+      env.DEVSPACE_AUTOCOMMIT_CODEX_REASONING_EFFORT ??
+      DEFAULT_AUTOCOMMIT_CODEX_REASONING_EFFORT,
+    codexFastMode: parseBoolean(env.DEVSPACE_AUTOCOMMIT_CODEX_FAST),
   };
 }
 

@@ -2,12 +2,14 @@ export type AutoCommitProviderId = "pi" | "codex";
 
 export interface AutoCommitConfig {
   enabled: boolean;
-  providers: AutoCommitProviderId[];
+  provider: AutoCommitProviderId;
   afterMutatingToolCalls: number;
   includeUntracked: boolean;
   maxDiffBytes: number;
   refPrefix: string;
-  codexModel?: string;
+  model?: string;
+  codexReasoningEffort: string;
+  codexFastMode: boolean;
 }
 
 export interface WorkspaceOpenedInput {

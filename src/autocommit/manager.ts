@@ -14,7 +14,7 @@ import {
   statusPorcelain,
   statusPorcelainZ,
 } from "./git.js";
-import { createAutoCommitProviders, generateWithProviderChain } from "./providers.js";
+import { createAutoCommitProvider, generateWithProvider } from "./providers.js";
 import type {
   AutoCommitManager,
   AutoCommitProvider,
@@ -35,11 +35,13 @@ export function createAutoCommitManager(input: CreateAutoCommitManagerInput): Au
 
 class DefaultAutoCommitManager implements AutoCommitManager {
   private readonly states = new Map<string, AutoCommitWorkspaceState>();
-  private readonly providers: AutoCommitProvider[];
+  private readonly provider: AutoCommitProvider;
 
   constructor(private readonly config: AutoCommitConfig) {
-    this.providers = createAutoCommitProviders(config.providers, {
-      codexModel: config.codexModel,
+    this.provider = createAutoCommitProvider(config.provider, {
+      model: config.model,
+      codexReasoningEffort: config.codexReasoningEffort,
+      codexFastMode: config.codexFastMode,
     });
   }
 
@@ -173,7 +175,7 @@ class DefaultAutoCommitManager implements AutoCommitManager {
         return;
       }
 
-      const providerResult = await generateWithProviderChain(this.providers, {
+      const providerResult = await generateWithProvider(this.provider, {
         workspaceRoot: state.workspaceRoot,
         diff: diffA.patch,
         diffStat: diffA.stat,

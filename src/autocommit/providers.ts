@@ -1,4 +1,7 @@
 import { execFile } from "node:child_process";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { promisify } from "node:util";
 import { buildCommitMetadataPrompt } from "./prompt.js";
 import type {
@@ -7,6 +10,7 @@ import type {
   CommitMetadata,
   GenerateCommitMetadataInput,
 } from "./types.js";
+import type { CreateAgentSessionOptions } from "@earendil-works/pi-coding-agent";
 
 const execFileAsync = promisify(execFile);
 
@@ -24,17 +28,19 @@ const commitTypes = new Set([
 ]);
 
 export interface CreateAutoCommitProvidersOptions {
-  codexModel?: string;
+  model?: string;
+  codexReasoningEffort: string;
+  codexFastMode: boolean;
 }
 
-export function createAutoCommitProviders(
-  ids: AutoCommitProviderId[],
-  options: CreateAutoCommitProvidersOptions = {},
-): AutoCommitProvider[] {
-  return ids.map((id) => (id === "pi" ? createPiProvider() : createCodexProvider(options)));
+export function createAutoCommitProvider(
+  id: AutoCommitProviderId,
+  options: CreateAutoCommitProvidersOptions,
+): AutoCommitProvider {
+  return id === "pi" ? createPiProvider(options) : createCodexProvider(options);
 }
 
-function createPiProvider(): AutoCommitProvider {
+function createPiProvider(options: CreateAutoCommitProvidersOptions): AutoCommitProvider {
   return {
     id: "pi",
     async isAvailable() {
@@ -46,11 +52,19 @@ function createPiProvider(): AutoCommitProvider {
       }
     },
     async generateCommitMetadata(input) {
-      const { createAgentSession, SessionManager } = await import("@earendil-works/pi-coding-agent");
+      const { AuthStorage, createAgentSession, ModelRegistry, SessionManager } = await import(
+        "@earendil-works/pi-coding-agent"
+      );
+      const authStorage = AuthStorage.create();
+      const modelRegistry = ModelRegistry.create(authStorage);
+      const model = options.model ? resolvePiModel(modelRegistry, options.model) : undefined;
       const { session } = await createAgentSession({
         cwd: input.workspaceRoot,
         noTools: "all",
         sessionManager: SessionManager.inMemory(),
+        authStorage,
+        modelRegistry,
+        ...(model ? { model } : {}),
       });
       let text = "";
 
@@ -83,6 +97,25 @@ function createPiProvider(): AutoCommitProvider {
   };
 }
 
+function resolvePiModel(
+  modelRegistry: { find(provider: string, model: string): unknown },
+  rawModel: string,
+): CreateAgentSessionOptions["model"] {
+  const separator = rawModel.indexOf("/");
+  if (separator <= 0 || separator === rawModel.length - 1) {
+    throw new Error("Pi autocommit model must use provider/model format.");
+  }
+
+  const provider = rawModel.slice(0, separator);
+  const modelId = rawModel.slice(separator + 1);
+  const model = modelRegistry.find(provider, modelId);
+  if (!model) {
+    throw new Error(`Pi autocommit model not found: ${rawModel}`);
+  }
+
+  return model as CreateAgentSessionOptions["model"];
+}
+
 function createCodexProvider(options: CreateAutoCommitProvidersOptions): AutoCommitProvider {
   return {
     id: "codex",
@@ -96,45 +129,80 @@ function createCodexProvider(options: CreateAutoCommitProvidersOptions): AutoCom
     },
     async generateCommitMetadata(input) {
       const prompt = providerPrompt(input);
-      const { stdout } = await execFileAsync(
-        "codex",
-        [
-          "exec",
-          "--sandbox",
-          "read-only",
-          ...(options.codexModel ? ["--model", options.codexModel] : []),
-          prompt,
-        ],
-        {
-          cwd: input.workspaceRoot,
-          env: process.env,
-          maxBuffer: 10 * 1024 * 1024,
-          timeout: 120_000,
-        },
-      );
+      const tempDir = await mkdtemp(join(tmpdir(), "devspace-autocommit-codex-"));
+      const schemaPath = join(tempDir, "schema.json");
+      const outputPath = join(tempDir, "output.json");
 
-      return normalizeCommitMetadata(extractJsonObject(stdout));
+      try {
+        await writeFile(schemaPath, JSON.stringify(commitMetadataJsonSchema(), null, 2));
+        await writeFile(outputPath, "");
+
+        await execFileAsync(
+          "codex",
+          [
+            "exec",
+            "--ephemeral",
+            "--skip-git-repo-check",
+            "--sandbox",
+            "read-only",
+            "--model",
+            options.model ?? "gpt-5.3-codex-spark",
+            "--config",
+            `model_reasoning_effort="${options.codexReasoningEffort}"`,
+            ...(options.codexFastMode ? ["--config", `service_tier="fast"`] : []),
+            "--output-schema",
+            schemaPath,
+            "--output-last-message",
+            outputPath,
+            prompt,
+          ],
+          {
+            cwd: input.workspaceRoot,
+            env: process.env,
+            maxBuffer: 10 * 1024 * 1024,
+            timeout: 180_000,
+          },
+        );
+
+        return normalizeCommitMetadata(extractJsonObject(await readFile(outputPath, "utf8")));
+      } finally {
+        await rm(tempDir, { recursive: true, force: true });
+      }
     },
   };
 }
 
-export async function generateWithProviderChain(
-  providers: AutoCommitProvider[],
+function commitMetadataJsonSchema(): Record<string, unknown> {
+  return {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      shouldCommit: { type: "boolean" },
+      type: { type: "string", enum: [...commitTypes] },
+      scope: { type: "string" },
+      subject: { type: "string" },
+      body: { type: "string" },
+      files: { type: "array", items: { type: "string" } },
+      reason: { type: "string" },
+      model: { type: "string" },
+    },
+    required: ["shouldCommit", "type", "subject", "reason"],
+  };
+}
+
+export async function generateWithProvider(
+  provider: AutoCommitProvider,
   input: GenerateCommitMetadataInput,
 ): Promise<{ provider: AutoCommitProvider; metadata: CommitMetadata } | undefined> {
-  for (const provider of providers) {
-    const availability = await provider.isAvailable({ workspaceRoot: input.workspaceRoot });
-    if (!availability.available) continue;
+  const availability = await provider.isAvailable({ workspaceRoot: input.workspaceRoot });
+  if (!availability.available) return undefined;
 
-    try {
-      const metadata = normalizeCommitMetadata(await provider.generateCommitMetadata(input));
-      return { provider, metadata };
-    } catch {
-      // Try the next configured provider.
-    }
+  try {
+    const metadata = normalizeCommitMetadata(await provider.generateCommitMetadata(input));
+    return { provider, metadata };
+  } catch {
+    return undefined;
   }
-
-  return undefined;
 }
 
 export function normalizeCommitMetadata(input: unknown): CommitMetadata {
