@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { access, readFile } from "node:fs/promises";
+import { access } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { createMcpExpressApp } from "@modelcontextprotocol/sdk/server/express.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
@@ -9,6 +10,7 @@ import {
   registerAppTool,
   RESOURCE_MIME_TYPE,
 } from "@modelcontextprotocol/ext-apps/server";
+import express from "express";
 import type { Request, Response } from "express";
 import * as z from "zod/v4";
 import { loadConfig, type ServerConfig } from "./config.js";
@@ -71,33 +73,50 @@ function textSummary(content: ToolContent[]): { lines: number; characters: numbe
   };
 }
 
-function compactToolResultText(
-  verb: string,
-  label: string,
-  summary: Record<string, unknown>,
-): string {
-  const details = Object.entries(summary)
-    .map(([key, value]) => `${key}: ${String(value)}`)
-    .join(", ");
-  return details ? `${verb} ${label} (${details}).` : `${verb} ${label}.`;
+function assetBaseUrl(config: ServerConfig): string {
+  return `${config.publicBaseUrl.replace(/\/+$/, "")}/mcp-app-assets`;
 }
 
-async function loadWorkspaceAppHtml(): Promise<string> {
+function workspaceAppHtml(config: ServerConfig): string {
+  const baseUrl = assetBaseUrl(config);
+  return `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Pi MCP Workspace</title>
+    <script type="module" crossorigin src="${baseUrl}/assets/workspace-app.js"></script>
+    <link rel="stylesheet" crossorigin href="${baseUrl}/assets/workspace-app.css" />
+  </head>
+  <body>
+    <main id="app" class="shell">
+      <section class="empty">Waiting for a tool result.</section>
+    </main>
+  </body>
+</html>`;
+}
+
+function appCsp(config: ServerConfig): { resourceDomains: string[]; connectDomains: string[] } {
+  const publicBaseUrl = config.publicBaseUrl.replace(/\/+$/, "");
+  return {
+    resourceDomains: [publicBaseUrl],
+    connectDomains: [publicBaseUrl],
+  };
+}
+
+function uiBuildDirectory(): string {
+  return fileURLToPath(new URL("../dist/ui", import.meta.url));
+}
+
+async function assertWorkspaceAppAssets(): Promise<void> {
   const candidates = [
-    new URL("../dist/ui/workspace-app.html", import.meta.url),
-    new URL("./ui/workspace-app.html", import.meta.url),
+    new URL("../dist/ui/assets/workspace-app.js", import.meta.url),
+    new URL("../dist/ui/assets/workspace-app.css", import.meta.url),
   ];
 
   for (const candidate of candidates) {
-    try {
-      await access(candidate);
-      return await readFile(candidate, "utf-8");
-    } catch {
-      // Try the next path. The first works from dist, the second from tsx dev.
-    }
+    await access(candidate);
   }
-
-  throw new Error("Built workspace app resource not found. Run npm run build:app.");
 }
 
 function createMcpServer(
@@ -127,27 +146,21 @@ function createMcpServer(
       description: "Interactive card for viewing edit_file diffs.",
       _meta: {
         ui: {
-          csp: {
-            resourceDomains: ["https://esm.sh"],
-            connectDomains: ["https://esm.sh"],
-          },
+          csp: appCsp(config),
         },
       },
     },
     async () => {
-      const html = await loadWorkspaceAppHtml();
+      await assertWorkspaceAppAssets();
       return {
         contents: [
           {
             uri: WORKSPACE_APP_URI,
             mimeType: RESOURCE_MIME_TYPE,
-            text: html,
+            text: workspaceAppHtml(config),
             _meta: {
               ui: {
-                csp: {
-                  resourceDomains: ["https://esm.sh"],
-                  connectDomains: ["https://esm.sh"],
-                },
+                csp: appCsp(config),
               },
             },
           },
@@ -834,6 +847,15 @@ export function createServer(config = loadConfig()): RunningServer {
   const transports = new Map<string, Transport>();
   const workspaces = new WorkspaceRegistry(config);
   const results = new ResultStore();
+
+  app.use(
+    "/mcp-app-assets",
+    express.static(uiBuildDirectory(), {
+      immutable: true,
+      maxAge: "1y",
+      fallthrough: false,
+    }),
+  );
 
   app.get("/healthz", (_req, res) => {
     res.json({ ok: true, name: "pi-on-mcp" });

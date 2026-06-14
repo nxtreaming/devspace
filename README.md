@@ -55,6 +55,7 @@ npm run build
 PI_ON_MCP_TOKEN="change-me" \
 PI_ON_MCP_ALLOWED_ROOTS="/home/waishnav/personal,/home/waishnav/work" \
 PI_ON_MCP_ALLOWED_HOSTS="localhost,127.0.0.1,agent.gitcms.blog" \
+PI_ON_MCP_PUBLIC_BASE_URL="https://agent.gitcms.blog" \
 npm run dev
 ```
 

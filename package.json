@@ -5,7 +5,7 @@
   "type": "module",
   "main": "dist/server.js",
   "scripts": {
-    "build": "npm run build:app && tsc -p tsconfig.json",
+    "build": "npm run build:app && tsc -p tsconfig.build.json",
     "build:app": "vite build",
     "dev": "tsx watch src/server.ts",
     "start": "node dist/server.js",
@@ -33,7 +33,6 @@
     "@vitejs/plugin-react": "^6.0.2",
     "tsx": "^4.22.3",
     "typescript": "^6.0.3",
-    "vite": "^8.0.14",
-    "vite-plugin-singlefile": "^2.3.3"
+    "vite": "^8.0.14"
   }
 }

@@ -6,6 +6,7 @@ export interface ServerConfig {
   authToken?: string;
   allowedRoots: string[];
   allowedHosts: string[];
+  publicBaseUrl: string;
 }
 
 function parsePort(value: string | undefined): number {
@@ -47,5 +48,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
     authToken: env.PI_ON_MCP_TOKEN,
     allowedRoots: parseAllowedRoots(env.PI_ON_MCP_ALLOWED_ROOTS),
     allowedHosts: parseAllowedHosts(env.PI_ON_MCP_ALLOWED_HOSTS),
+    publicBaseUrl: env.PI_ON_MCP_PUBLIC_BASE_URL ?? "https://agent.gitcms.blog",
   };
 }
