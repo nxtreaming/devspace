@@ -5,7 +5,8 @@
   "type": "module",
   "main": "dist/server.js",
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "npm run build:app && tsc -p tsconfig.json",
+    "build:app": "vite build",
     "dev": "tsx watch src/server.ts",
     "start": "node dist/server.js",
     "test": "tsx src/workspaces.test.ts",

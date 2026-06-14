@@ -1,8 +1,14 @@
 import { randomUUID } from "node:crypto";
+import { access, readFile } from "node:fs/promises";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { createMcpExpressApp } from "@modelcontextprotocol/sdk/server/express.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
+import {
+  registerAppResource,
+  registerAppTool,
+  RESOURCE_MIME_TYPE,
+} from "@modelcontextprotocol/ext-apps/server";
 import type { Request, Response } from "express";
 import * as z from "zod/v4";
 import { loadConfig, type ServerConfig } from "./config.js";
@@ -19,6 +25,7 @@ import { countDiffStats, ResultStore } from "./result-store.js";
 import { formatAgentsNotice, WorkspaceRegistry } from "./workspaces.js";
 
 type Transport = StreamableHTTPServerTransport;
+const WORKSPACE_APP_URI = "ui://pi-on-mcp/workspace-app.html";
 
 interface RunningServer {
   app: ReturnType<typeof createMcpExpressApp>;
@@ -45,6 +52,24 @@ function sendJsonRpcError(
   });
 }
 
+async function loadWorkspaceAppHtml(): Promise<string> {
+  const candidates = [
+    new URL("./ui/workspace-app.html", import.meta.url),
+    new URL("../dist/ui/workspace-app.html", import.meta.url),
+  ];
+
+  for (const candidate of candidates) {
+    try {
+      await access(candidate);
+      return await readFile(candidate, "utf-8");
+    } catch {
+      // Try the next path. The first works from dist, the second from tsx dev.
+    }
+  }
+
+  throw new Error("Built workspace app resource not found. Run npm run build:app.");
+}
+
 function createMcpServer(
   config: ServerConfig,
   workspaces: WorkspaceRegistry,
@@ -61,6 +86,81 @@ function createMcpServer(
     {
       instructions:
         "Use this server as a local coding workspace harness. First call open_workspace with a project directory inside an allowed root. Then use the returned workspaceId for all file, search, edit, write, and shell tools. Follow any AGENTS.md context returned by open_workspace or subsequent tool calls. Prefer read_file and search tools for inspection, edit_file for targeted modifications, write_file only for new files or complete rewrites, and run_shell for tests/builds/git commands.",
+    },
+  );
+
+  registerAppResource(
+    server,
+    "Pi Edit Diff Card",
+    WORKSPACE_APP_URI,
+    {
+      description: "Interactive card for viewing edit_file diffs.",
+      _meta: {
+        ui: {
+          csp: {},
+        },
+      },
+    },
+    async () => {
+      const html = await loadWorkspaceAppHtml();
+      return {
+        contents: [
+          {
+            uri: WORKSPACE_APP_URI,
+            mimeType: RESOURCE_MIME_TYPE,
+            text: html,
+            _meta: {
+              ui: {
+                csp: {},
+              },
+            },
+          },
+        ],
+      };
+    },
+  );
+
+  registerAppTool(
+    server,
+    "get_edit_result_payload",
+    {
+      title: "Get edit result payload",
+      description:
+        "Fetch the full diff payload for an edit_file result. This is app-only and hidden from the model.",
+      inputSchema: {
+        workspaceId: z
+          .string()
+          .describe("Workspace identifier returned by open_workspace."),
+        resultId: z.string().describe("Result identifier returned by edit_file."),
+      },
+      _meta: {
+        ui: {
+          resourceUri: WORKSPACE_APP_URI,
+          visibility: ["app"],
+        },
+      },
+      annotations: { readOnlyHint: true },
+    },
+    async ({ workspaceId, resultId }) => {
+      workspaces.getWorkspace(workspaceId);
+      const result = results.get(resultId, workspaceId);
+
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `Loaded diff payload for ${result.path}.`,
+          },
+        ],
+        structuredContent: {
+          tool: "get_edit_result_payload",
+          resultId,
+          workspaceId,
+          path: result.path,
+          summary: result.summary,
+          payload: result.payload,
+        },
+      };
     },
   );
 
@@ -186,7 +286,8 @@ function createMcpServer(
     },
   );
 
-  server.registerTool(
+  registerAppTool(
+    server,
     "edit_file",
     {
       title: "Edit file",
@@ -211,6 +312,12 @@ function createMcpServer(
             }),
           )
           .min(1),
+      },
+      _meta: {
+        ui: {
+          resourceUri: WORKSPACE_APP_URI,
+          visibility: ["model"],
+        },
       },
       annotations: { destructiveHint: true },
     },
